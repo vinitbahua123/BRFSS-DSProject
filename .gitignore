@@ -1,0 +1,8 @@
+# Ignore large R/RStudio files
+.RData
+.Rhistory
+.RDataTmp*
+.Rproj.user/
+
+# Ignore the large data file (over 1 GB)
+Behavioral_Risk_Factor_Surveillance_System_(BRFSS)_Prevalence_Data_(2011_to_present)_20251117.csv

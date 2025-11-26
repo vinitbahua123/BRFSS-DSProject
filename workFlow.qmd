@@ -1,0 +1,947 @@
+---
+title: "DS5011 Project Description"
+format: pdf
+---
+
+```{r load_libraries,echo=FALSE,message=FALSE}
+library(tidyverse)
+library(RColorBrewer)
+library(utils)
+options(dplyr.summarise.inform=FALSE)
+```
+
+```{r load_data,echo=FALSE}
+fileList <- dir(recursive=TRUE)
+fileName <- str_subset(fileList,"Prevalence.*[.]csv")
+df <- read_csv(fileName,show_col_types=FALSE)
+fileName <- str_subset(fileList,"uestion.*[.]csv")
+keyDf <- read_csv(fileName,show_col_types = FALSE)
+```
+
+
+# DS5011 Project: Behavioral Risk Factor Surveillance System Dashboard 
+
+## Introduction
+
+BRFSS, or the Behavioral Risk Factor Surveillance System, is the world's largest and longest-running telephone survey system for collecting health-related information from adults in the U.S.. It is a collaborative project between the Centers for Disease Control and Prevention (CDC) and all U.S. states, the District of Columbia, and U.S. territories. The survey gathers data on health behaviors, chronic conditions, and preventive care to monitor public health and inform policy.  
+
+## What BRFSS collects
+
+- **Health-related risk behaviors**: Such as tobacco use, alcohol consumption, and physical activity. 
+- **Chronic health conditions**: Data on conditions like heart disease, diabetes, and cancer. 
+- **Preventive care**: Information on access to and use of health services, including vaccinations and screenings. 
+- **Demographics and other factors**: Includes information on health care access, sleep patterns, and other demographic data. 
+
+## How BRFSS is conducted
+
+- **Surveys**: Telephone surveys are conducted monthly using landlines and cellular phones. 
+- **Data collection**: Each state conducts its own survey with the assistance of the CDC, and the data is aggregated at the state level. 
+- **Population**: The target population is the civilian noninstitutionalized adult population aged 18 and older. 
+- **Scale**: The survey system completes over 400,000 adult interviews each year across all participating states and territories. 
+
+## Why BRFSS is important
+
+- **Monitoring health**: It provides state-specific data that helps monitor public health trends and assess progress toward national health objectives. 
+- **Informing policy**: The data is used to design and evaluate public health programs and policies aimed at improving the health of the population. 
+- **Research**: It serves as a crucial data source for researchers studying health-related issues across the country. 
+
+## About the Dataset
+
+The BRFSS data repository is enormous and not available to the public.  However, summary statistics are publicly available [here](https://data.cdc.gov/Behavioral-Risk-Factors/Behavioral-Risk-Factor-Surveillance-System-BRFSS-P/dttw-5yxu/about_data) in *.csv format at the relatively modest size of 1GB.  Please download this summary data into your IDE as tibble `df` to explore it with this markdown file.
+
+The *.csv file has `r dim(df)[1]` rows and `r dim(df)[2]` columns.
+
+For each question asked in column `Question`, summary statistics include *percentage confidence intervals* for each possible response value in column `Response`.  The left (right) endpoint of this interval is in `Confidence_limit_Low` (`Confidence_limit_High`). Most importantly for your project goals, these percentages are computed on grouped data.  Grouping is done always using columns `Locationabbr` (state/territory) and `Year`.  For this broadest grouping, columns `Break_Out` and `Break_Out_Category` take value "Overall".  Further grouping is indicated in those columns, including by: age, household income, sex, race, and highest education level.
+
+
+Note that the use of `ID` columns in large table provide *keys* to the values in other columns.  Key matching is much more efficient than value matching.  Here is the key:value list between `BreakOutCategoryID` and `Break_Out_Category`, for example
+
+```{r key:value1,echo=FALSE,message=FALSE}
+df |>
+    group_by(BreakOutCategoryID,Break_Out_Category) |>
+    summarize(count=n())|>
+    print(n=10)
+```
+
+
+Survey questions are assigned both a `Topic` and a `Class`, which may help in organizing the questions into layers.  For example, here is a possible layering scenario.
+
+```{r topic_class_question_layering}
+layerQ <- df |>
+    select(Class,Topic,Question) |>
+    distinct() 
+layerQ |>
+    group_by(Class,Topic) |>
+    summarize(numberQuestions=n()) |>
+    print(n=75)
+```
+
+Finally, the survey questions themselves have IDs (sometimes several).
+
+```{r key:value6,echo=FALSE}
+df |>
+    select(TopicId,ClassId,QuestionID,Question) |>
+    distinct() |>
+    arrange(TopicId,ClassId,Question) |>
+    print(n=20)
+```
+
+
+The output below shows that there are approximately 100 questions and some of the questions have multiple values of `QuestionID`.  
+
+```{r group_by_question_count_QuestionIDs,echo=FALSE}
+df |>
+    select(Question,QuestionID) |>
+    distinct() |>
+    group_by(Question) |>
+    summarize(countQIDs=n()) |>
+    arrange(Question) |>
+    print(n=15)
+```
+
+Why is there a need for multiple values of `QuestionID` for the same question?  Let's investigate this further for the `Question` matching "(Heavy drinkers).\*(male).\*(14 drinks)".  Here is the count of each income breakout in the dataset for this question.
+
+
+```{r heavy_drinker_question,echo=FALSE}
+df |>
+    filter( str_detect(Question,
+        "^(Heavy drinkers).*(men).*(14 drinks)")) |>
+            filter(Locationabbr=="MA") |>
+            select(BreakoutID,Break_Out,QuestionID) |>
+            filter(str_detect(BreakoutID,"INCOME")) |>
+            group_by(BreakoutID,Break_Out) |>
+                summarize(countBreakIDs=n()) |>
+                print(n=50)
+```
+
+A new income-level breakout was introduced in the last 3 years of the dataset, providing 7 instead of 5 categories.  As a result of the new division, a new value of `QuestionID` was assigned.  Care must be taken when combining results when a question has multiple values of `QuestionID`.
+
+## Project Goal
+
+In this effort you are to produce a dashboard interface to the BRFSS dataset, allowing the user to select the survey question and the dashboard displays the various breakouts of the survey results for the question. Each subpanel of the dashboard should subset the results by only one criteria (age, for example). There should be a subpanel devoted to choosing the question.  In addition, for each possible response, a:
+
+- **confidence interval** overall in an **Overall** subpanel
+- **confidence interval** versus gender in a **By_Gender** subpanel
+- **confidence interval** versus age in a **By_Age_Group** subpanel
+- **confidence interval** versus state/territory in a **By_Location** subpanel
+- **confidence interval** versus level of education in a **By_Education** subpanel
+- **confidence interval** versus income level in a **By_Income** subpanel
+- **confidence interval** versus year in a **Temporal** subpanel
+
+## Grading metrics and design considerations
+
+**Function over fashion**.  The dashboard does not need to be fancy, and it must function accurately and repeatedly. Emphacize function, not fashion, in your work product.  One more time:  wrangle Dash Plotly or RShiny last, or not at all, but wrangle the workflow accuracy.  Lastly, a pretty and inaccurate dashboard will receive a pretty low score.  Most of the credit for this project will be given to accurate aggregation of the data, not the display of the aggregation.  Do not overtweek the user interface!  Below are some suggestions to consider when deploying your user interface.
+
+**Question selection**.  There are 100 questions, so the selection of a question should be layered.  Consider a top-down layering of Class/Topic/Question, for example.  Do not present the user with keys, only the value of the keys.
+
+**Subpanel Visualization**.  Please consider this important problem carefully. Subset the results *only* by one variable in each subpanel.  For example, subset by year only in one subpanel, geography in another subpanel, age in a third subpanel, etc.  This means that all other breakouts must be aggregated!    More on this later.
+
+**State/territory subpanel**.  There are more than 50 regions to consider, so use a compact way to represent the geographical results, such as a map, or aggregating states into national regions, or showing highest, lowest and average geographical regions.
+
+**User adaptable subpanel complexity**.  Consider having, for each subpanel, a "more" feature and a "less" feature.  This enables the user to adjust the granularity of each subpanel.  **And,** provide only a few (5?) levels of granularity for each subpanel.  Otherwise, you risk underwhelming or overwhelming your audience.
+
+## Proposed workflow
+- **Consider a parquet-formatted dataset, based on observed speedup of information retrieval**.
+
+- **Design the question selection tool**.
+
+- **Design the aggregation workflow for each subpanel, beginning with the Overall subpanel**.
+
+- **Design the Overall subpanel without "more" or "less" options**.
+
+- **Augment the Overall subpanel with "more" or "less" options**.
+
+- **Design the other subpanels without "more" or "less" options**.
+
+- **Modify these subpanels to include "more" or "less" options**.
+
+
+## Aggregation Strategy for "Overall" Breakout
+
+Most of the questions have a breakout group called "Overall".  As the name suggests, this is the broadest aggregation so far in the dataset.  However, percentages labeled "Overall" are still  per-territory, per-year summary metrics and not true overall results!  Here, we consider a method to aggregate and produce confidence limits for response percentages.  
+
+Note that the sample size is provided in column `Sample_Size` along with a percentage estimate in column `Data_value`.  The percentage estimate and the sample size allow you to translate per-breakout percentage estimates to per-breakout person estimates prior to aggregation.  Upon aggregation, the aggregate sample size can be used to determine an aggregate percentage confidence interval.  If the possible responses to a questions do not vary over time or territory, then aggregation is straightforward.  Let's consider that case first.
+
+The chunk below illustrates how one could aggregate the per-territory per-year "Overall" value for `Break_Out` ("BO1" value for `BreakOutID`).  However, if we "Run Cell" repeatedly, we see some problems with our aggregation.  Try it!
+
+```{r aggregate_overall_without_response_map}
+    save_rows <- c(2150434,830046,131103)
+    qidx<- sample(save_rows,size=1) 
+df |>
+    select(Question,Break_Out,Response,ResponseID,
+    Sample_Size,Data_value) |>
+    filter(Question==Question[qidx]) |>
+    filter(Break_Out=="Overall") |>
+    na.omit() |>
+    rename(persons=Sample_Size) |>
+    mutate(Sample_Size=persons*100/Data_value) |>
+    group_by(ResponseID,Response) |>
+    summarize(agg_ss=sum(Sample_Size),
+    agg_persons=sum(persons),
+    agg_percent=agg_persons*100/agg_ss,
+    agg_percent_sdev=sqrt(agg_percent*(100-agg_percent)/agg_ss),
+    agg_low_ci_limit=agg_percent - 2*agg_percent_sdev,
+    agg_high_ci_limit=agg_percent + 2*agg_percent_sdev) |>
+        print(n=20)
+```
+
+By a few trials of the above chunk, it may be seen that the response options changed over the course of this survey for some questions.  Often, the changes are trivial, for example, "Emplyd" vs. "Employed", or  "Homemkr" vs "Homemaker".  In other cases, the response options have different refinement, for example, "$50,000+", vs the finer options "$50,000-99,999","$100,000-199,999", and "$200,000+".
+In all these cases, note that the value of `ResponseID` changes when the response option changes.
+
+In order to aggregate properly, we need to merge these responses.  Without this merge, "Homemkr" and "Homemaker" responses will not be pooled.  Fortunately, this may be done by a simple mapping of every value of `ResponseID` to a new one, reflecting the merge.  I have drafted merge rules for responseID values in the function below.  Please start with that function and modify it as necessary. 
+
+```{r merge_ResponseID_function}
+merge_ResponseID <- function(char_vec) {
+    char_vec <- str_replace(char_vec,"RESP025","RESP137")
+    char_vec <- str_replace(char_vec,"RESP026","RESP172")
+    char_vec <- str_replace(char_vec,"RESP029","RESP141")
+    char_vec <- str_replace(char_vec,"RESP230","RESP020")
+    char_vec <- str_replace(char_vec,"RESP231","RESP020")
+    char_vec <- str_replace(char_vec,"RESP232","RESP020")
+    char_vec <- str_replace(char_vec,"RESP196","RESP199")
+    char_vec <- str_replace(char_vec,"RESP197","RESP199")
+    char_vec <- str_replace(char_vec,"RESP198","RESP199")
+    char_vec <- str_replace(char_vec,"RESP199","RESP199")
+    char_vec <- str_replace(char_vec,"RESP200","RESP008")
+    char_vec <- str_replace(char_vec,"RESP194","RESP005")
+    char_vec <- str_replace(char_vec,"RESP195","RESP006")
+    return(char_vec)
+}
+```
+After the `ResponseID` column is merged, the following function changes the `Response` column.  Both functions should be updated in tandem.
+
+```{r merge_Response_function}
+merge_Response <- function(ResponseID,Response) {
+idx <- str_detect(ResponseID,"RESP137")
+Response[idx] <- "Employed"
+idx <- str_detect(ResponseID,"RESP172")
+Response[idx] <- "Self-employed"
+idx <- str_detect(ResponseID,"RESP141")
+Response[idx] <- "Homemaker"
+idx <- str_detect(ResponseID,"RESP020")
+Response[idx] <- "$50,000+"
+idx <- str_detect(ResponseID,"RESP199")
+Response[idx] <- "A/A Native, Asian,Other"
+idx <- str_detect(ResponseID,"RESP008")
+Response[idx] <- "Multiracial"
+idx <- str_detect(ResponseID,"RESP005")
+Response[idx] <- "White"
+idx <- str_detect(ResponseID,"RESP006")
+Response[idx] <- "Black"
+# make all responses lower case
+Response <- tolower(Response)
+return(Response)
+}
+```
+
+  **One of your tasks will be to map each one of these values of `ResponseID` to a (possible) new one, reflecting how the responses are merged, starting with the draft functions above.**  There will only be a small number of changes in this process, as most of the response options do not need to be merged.  
+
+Here the draft functions are applied to the same questions.  Are there improvements?
+
+```{r aggregate_overall_with_response_map}
+    save_rows <- c(2150434,830046,131103)
+    qidx<- sample(save_rows,size=1) 
+lDf <- df |>
+    select(Question,Break_Out,Response,ResponseID,
+    Sample_Size,Data_value) |>
+    filter(Question==Question[qidx]) |>
+    filter(Break_Out=="Overall") 
+
+    lDf$ResponseID <- merge_ResponseID(lDf$ResponseID)
+    lDf$Response <- merge_Response(unlist(lDf$ResponseID),
+    unlist(lDf$Response))
+
+
+    lDf |>
+    na.omit() |>
+    rename(persons=Sample_Size) |>
+    mutate(Sample_Size=persons*100/Data_value) |>
+    group_by(ResponseID,Response) |>
+    summarize(agg_ss=sum(Sample_Size),
+    agg_persons=sum(persons),
+    agg_percent=agg_persons*100/agg_ss,
+    agg_percent_sdev=sqrt(agg_percent*(100-agg_percent)/agg_ss),
+    agg_low_ci_limit=agg_percent - 2*agg_percent_sdev,
+    agg_high_ci_limit=agg_percent + 2*agg_percent_sdev) |>
+        print(n=20)
+```
+
+
+## General Aggregation Approach
+
+To aggregate "Overall" breakouts, it is important to merge the response options, as shown above.  Aggregating of "Overall" breakouts is relatively straightforward, however, because there can be no change in the **breakout categories** over year or territory. "Overall" doesn't change throughout this survey.  This is not the case for other breakout categories, however.  Let's see an example of a question, whose responses are merged, below.  Note the difference in the number of breakouts in the "Household Income" breakout category.
+
+```{r random_questions_response_options_per_breakout}
+#my_Question <- "What is your race/ethnicity?"
+#my_Question <- df$Question[sample(dim(df)[1],1)]
+my_Question <- "Ever told you that you have a form of depression?" 
+lDf <- df |>
+    filter(Question==my_Question) |>
+    select(Question,QuestionID,Response,
+   ResponseID,Break_Out, Break_Out_Category) 
+
+lDf$ResponseID <- merge_ResponseID(lDf$ResponseID)
+    lDf$Response <- merge_Response(unlist(lDf$ResponseID),
+    unlist(lDf$Response))
+
+    lDf |> 
+    filter(Response=="yes") |>
+    select(Question,QuestionID,Response,
+   Break_Out, Break_Out_Category) |>
+    distinct() |>
+    group_by(Question,QuestionID,Break_Out_Category) |>
+    summarize(countBreakOuts=n()) |>
+    arrange(Break_Out_Category) 
+```
+
+To get started, here is a list of the breakouts, with `BreakoutID` and `BreakOutCategoryID` included.
+
+```{r key:value2,echo=FALSE}
+df |>
+    group_by(BreakOutCategoryID,BreakoutID,Break_Out) |>
+    summarize(count=n())|>
+    print(n=100)
+```
+
+Let's begin with "CAT6", or income breakout.  Clearly, "INCOME05", "INCOME06", and "INCOME07" are a refinement of "INCOME5".  For "CAT4", or race, we also see a refinement, ("RACE03","RACE04","RACE05", and "RACE06" being a refinement of "RACE4"). Finally, for "CAT3", or age, we see two breakout groups (AGE01 through AGE11, and AGE12 through AGE26).  Some of these values of `BreakoutID` have full or partial overlap, while others reflect a refinement.
+
+One possible approach to merging the breakout categories mimics that for response options: first change the `BreakoutID` values, then change the `Break_Out` values.  The following are draft functions which attempt this.
+
+```{r merge_BreakoutID_function}
+merge_BreakoutID <- function(char_vec) {
+    char_vec <- str_replace(char_vec,"INCOME01","INCOME1")
+    char_vec <- str_replace(char_vec,"INCOME02","INCOME2")
+    char_vec <- str_replace(char_vec,"INCOME03","INCOME3")
+    char_vec <- str_replace(char_vec,"INCOME04","INCOME4")
+    char_vec <- str_replace(char_vec,"INCOME05","INCOME5")
+    char_vec <- str_replace(char_vec,"INCOME06","INCOME5")
+    char_vec <- str_replace(char_vec,"INCOME07","INCOME5")
+    char_vec <- str_replace(char_vec,"RACE01","RACE1")
+    char_vec <- str_replace(char_vec,"RACE02","RACE2")
+    char_vec <- str_replace(char_vec,"RACE08","RACE3")
+    char_vec <- str_replace(char_vec,"RACE04","RACE4")
+    char_vec <- str_replace(char_vec,"RACE05","RACE4")
+    char_vec <- str_replace(char_vec,"RACE06","RACE4")
+    char_vec <- str_replace(char_vec,"RACE03","RACE4")
+    char_vec <- str_replace(char_vec,"RACE07","RACE5")
+return(char_vec) 
+}
+```
+
+```{r merge_Break_Out_function}
+merge_Break_Out <- function(BreakoutID,Break_Out) {
+idx <- str_detect(BreakoutID,"INCOME5")
+Break_Out[idx] <- "$50,000+"
+idx <- str_detect(BreakoutID,"RACE1")
+Break_Out[idx] <- "White"
+idx <- str_detect(BreakoutID,"RACE2")
+Break_Out[idx] <- "Black"
+idx <- str_detect(BreakoutID,"RACE3")
+Break_Out[idx] <- "Hispanic"
+idx <- str_detect(BreakoutID,"RACE4")
+Break_Out[idx] <- "A/A Native, Asian,Other"
+idx <- str_detect(BreakoutID,"RACE5")
+Break_Out[idx] <- "Multiracial"
+return(Break_Out)
+}
+```
+
+Let's apply these functions to merge values in `BreakoutID` and `Break_Out` for the same question.
+
+```{r multiple_breakout_options_example}
+#my_Question <- "What is your race/ethnicity?"
+#my_Question <- df$Question[sample(dim(df)[1],1)]
+my_Question <- "Ever told you that you have a form of depression?" 
+lDf <- df |>
+    filter(Question==my_Question) |>
+    select(Question,QuestionID,Response,
+   ResponseID,Break_Out, BreakoutID,Break_Out_Category) 
+
+lDf$ResponseID <- merge_ResponseID(lDf$ResponseID)
+    lDf$Response <- merge_Response(unlist(lDf$ResponseID),
+    unlist(lDf$Response))
+lDf$BreakoutID <- merge_BreakoutID(lDf$BreakoutID)
+    lDf$Break_Out <- merge_Break_Out(unlist(lDf$BreakoutID),
+    unlist(lDf$Break_Out))
+
+lDf |> 
+    filter(Response=="yes") |>
+    select(Question,QuestionID,Response,
+   Break_Out, Break_Out_Category) |>
+    distinct() |>
+    group_by(Question,QuestionID,Break_Out_Category) |>
+    summarize(countBreakOuts=n()) |>
+    arrange(Break_Out_Category) 
+```
+
+As with response options, a complete aggregation will require that a mapping of BreakoutID values, reflected above, to a merged BreakoutID.  **One of your responsibilities is to merge values of BreakoutID, using your best judgement**.  The draft functions above serve as starting points.  Such a mapping will allow aggregation of responses to the same questions across different versions of breakout category.
+
+## Pre-Beta Prototype Dashboard
+
+In this section we consider a workflow, from choosing a question, to summarizing the results.  
+
+```{r prototype_workflow_choose_queston}
+# prototype_workflow_choose_question
+# interactive ONLY - prompt user for class
+#option <- unique(layerQ$Class)
+#idx <- utils::menu(option,title="Which class?")
+#my_class <- option[idx]
+#slayerQ <- layerQ |>
+#    filter(Class==my_class)
+## prompt user for topic
+#option <- unique(slayerQ$Topic)
+#idx <- utils::menu(option,title="Which topic?")
+#my_topic <- option[idx]
+#vslayerQ <- slayerQ |>
+#    filter(Topic==my_topic)
+## prompt user for question
+#option <- unique(vslayerQ$Question)
+#idx <- utils::menu(option,title="Which question?")
+#my_q <- option[idx]
+# from RDS file - question stored there
+my_q <- readRDS("my_q.RDS")
+```
+
+```{r prototype_workflow_preliminary}
+qDf <- df |>
+    filter(Question==my_q) |>
+    filter(!(Locationabbr == "US")) |>
+    filter(!(Locationabbr == "UW")) 
+# merges
+qDf$ResponseID <- merge_ResponseID(qDf$ResponseID)
+    qDf$Response <- merge_Response(unlist(qDf$ResponseID),
+    unlist(qDf$Response))
+qDf$BreakoutID <- merge_BreakoutID(qDf$BreakoutID)
+    qDf$Break_Out <- merge_Break_Out(unlist(qDf$BreakoutID),
+    unlist(qDf$Break_Out))
+```
+
+```{r new_prototype_overall}
+# comment out if next chunk is used
+(my_q <- str_extract(my_q,"[^(]+"))
+plotDf <- qDf |>
+    filter(BreakOutCategoryID=="CAT1") |>
+    select(Response,Sample_Size) |>
+    na.omit() |>
+    rename(persons=Sample_Size) |>
+    group_by(Response) |>
+    summarize(agg_persons=sum(persons))
+
+plotDf <- plotDf |>
+    mutate(agg_ss= sum(agg_persons)) |>
+    mutate(agg_percent=agg_persons*100/agg_ss) |>
+    mutate( agg_percent_sdev=sqrt(
+        agg_percent*(100-agg_percent)/agg_ss)) |>
+    mutate(agg_low_ci_limit=
+    agg_percent - 2*agg_percent_sdev) |>
+    mutate(agg_high_ci_limit=
+    agg_percent + 2*agg_percent_sdev) |>
+    select(-c(agg_persons,agg_ss,agg_percent_sdev)) 
+plotDf |>
+        select(-agg_percent) |>
+        print(n=20)
+    plotDf |>
+        ggplot( aes(x="overall",y=agg_percent,
+    fill=Response,color=Response,position="fill")) +
+         geom_col() + xlab(my_q)
+```
+
+
+```{r prototype_workflow_overall}
+## summary by overall
+#(my_q <- str_extract(my_q,"[^(]+"))
+#plotDf <- qDf |>
+#    filter(BreakOutCategoryID=="CAT1") |>
+#    select(Response,Sample_Size,Data_value) |>
+#    na.omit() |>
+#    rename(persons=Sample_Size) |>
+#    mutate(Sample_Size=persons/Data_value*100)|>
+##ssSum <- plotDf |>
+##    summarize(sum(persons))
+##ssSum <- unlist(ssSum)
+##numResponseOptions <- length(unique(plotDf$Response))
+##ssVec <- rep(ssSum,each=numResponseOptions)
+##plotDf |>
+#    group_by(Response) |>
+#    summarize(agg_ss=sum(Sample_Size),
+#    agg_persons=sum(persons),
+#    agg_percent=agg_persons*100/agg_ss,
+#    agg_percent_sdev=sqrt(agg_percent*(100-agg_percent)/agg_ss),
+#    agg_low_ci_limit=agg_percent - 2*agg_percent_sdev,
+#    agg_high_ci_limit=agg_percent + 2*agg_percent_sdev) |>
+#    select(-c(agg_persons,agg_percent_sdev)) 
+#
+#    plotDf |>
+#        select(-agg_percent) |>
+#        print(n=20)
+#    plotDf |>
+#        ggplot( aes(x="overall",y=agg_percent,
+#    fill=Response,color=Response,position="fill")) +
+#         geom_col() + xlab(my_q)
+```
+
+```{r new_prototype_by_territory}
+# comment out if next chunk is used
+# summary by territory
+(my_q)
+plotDf <- qDf |>
+    filter(BreakOutCategoryID=="CAT1") |>
+    select(Locationabbr,Response,Sample_Size) |>
+    na.omit() |>
+    rename(persons=Sample_Size) |>
+    group_by(Locationabbr) |>
+    summarize(Response=Response,
+    persons=persons,
+    agg_ss=sum(persons)) 
+plotDf <- plotDf |>
+    group_by(Locationabbr,Response) |>
+    summarize(agg_ss=agg_ss,
+    agg_persons=sum(persons),
+    agg_percent=agg_persons*100/agg_ss,
+    agg_percent_sdev=
+    sqrt(agg_percent*(100-agg_percent)/agg_ss),
+    agg_low_ci_limit=
+    agg_percent - 2*agg_percent_sdev,
+    agg_high_ci_limit=
+    agg_percent + 2*agg_percent_sdev) |>
+    distinct() |>
+    select(-c(agg_persons,agg_percent_sdev,agg_ss)) 
+plotDf |>
+        select(-agg_percent) |>
+        print(n=20)
+plotDf |>
+    ggplot( aes(x=Locationabbr,
+    y=agg_percent,
+    fill=Response,color=Response,position="fill")) +
+            geom_col() + xlab(my_q) + 
+            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+
+```{r prototype_workflow_by_territory}
+## summary by territory
+#(my_q)
+#plotDf <- qDf |>
+#    filter(BreakOutCategoryID=="CAT1") |>
+#    select(Locationabbr,Response,Sample_Size,Data_value) |>
+#    na.omit() |>
+#    rename(persons=Sample_Size) |>
+#    mutate(Sample_Size=persons*100/Data_value) |>
+#    group_by(Locationabbr,Response) |>
+#    summarize(agg_ss=sum(Sample_Size),
+#    agg_persons=sum(persons),
+#    agg_percent=agg_persons*100/agg_ss,
+#    agg_percent_sdev=sqrt(agg_percent*(100-agg_percent)/agg_ss),
+#    agg_low_ci_limit=agg_percent - 2*agg_percent_sdev,
+#    agg_high_ci_limit=agg_percent + 2*agg_percent_sdev) |>
+#        select(-c(agg_ss,agg_persons,agg_percent_sdev)) 
+#    plotDf |>
+#        select(-agg_percent) |>
+#        print(n=10)
+#    plotDf |>
+#        ggplot( aes(x=Locationabbr,
+#        y=agg_percent,
+#        fill=Response,color=Response,position="fill")) +
+#             geom_col() + xlab(my_q) + 
+#             theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#(my_q)
+```
+
+```{r new_prototype_by_time}
+# comment out if next chunk is used
+# summary by year
+(my_q)
+plotDf <- qDf |>
+    filter(BreakOutCategoryID=="CAT1") |>
+    select(Year,Response,Sample_Size) |>
+    na.omit() |>
+    rename(persons=Sample_Size) |>
+    group_by(Year) |>
+    summarize(Response=Response,
+    persons=persons,
+    agg_ss=sum(persons)) 
+plotDf <- plotDf |>
+    group_by(Year,Response) |>
+    summarize(agg_ss=agg_ss,
+    agg_persons=sum(persons),
+    agg_percent=agg_persons*100/agg_ss,
+    agg_percent_sdev=
+    sqrt(agg_percent*(100-agg_percent)/agg_ss),
+    agg_low_ci_limit=
+    agg_percent - 2*agg_percent_sdev,
+    agg_high_ci_limit=
+    agg_percent + 2*agg_percent_sdev) |>
+    distinct() |>
+    select(-c(agg_persons,agg_percent_sdev,agg_ss)) 
+plotDf |>
+        select(-agg_percent) |>
+        print(n=100)
+plotDf |>
+    ggplot( aes(x=Year,
+    y=agg_percent,
+    fill=Response,color=Response,position="fill")) +
+            geom_col() + xlab(my_q) + 
+            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+
+
+```{r prototype_workflow_temporal}
+##summary by year
+#(my_q)
+#plotDf <- qDf |>
+#    filter(BreakOutCategoryID=="CAT1") |>
+#    select(Year,Response,Sample_Size,Data_value) |>
+#    na.omit() |>
+#    rename(persons=Sample_Size) |>
+#    mutate(Sample_Size=persons*100/Data_value) |>
+#    group_by(Year,Response) |>
+#    summarize(agg_ss=sum(Sample_Size),
+#    agg_persons=sum(persons),
+#    agg_percent=agg_persons*100/agg_ss,
+#    agg_percent_sdev=sqrt(agg_percent*(100-agg_percent)/agg_ss),
+#    agg_low_ci_limit=agg_percent - 2*agg_percent_sdev,
+#    agg_high_ci_limit=agg_percent + 2*agg_percent_sdev) |>
+#        select(-c(agg_ss,agg_persons,agg_percent_sdev)) 
+#    plotDf |>
+#        select(-agg_percent) |>
+#        print(n=20)
+#    plotDf |>
+#        ggplot( aes(x=Year,y=agg_percent,
+#        fill=Response,color=Response,position="fill")) +
+#             geom_col() + xlab(my_q)
+```
+
+```{r new_prototype_by_gender}
+# comment out if next chunk is used
+# summary by gender
+(my_q)
+plotDf <- qDf |>
+    filter(BreakOutCategoryID=="CAT2") |>
+    select(Break_Out,Response,Sample_Size) |>
+    na.omit() |>
+    rename(persons=Sample_Size) |>
+    group_by(Break_Out) |>
+    summarize(Response=Response,
+    persons=persons,
+    agg_ss=sum(persons)) 
+plotDf <- plotDf |>
+    group_by(Break_Out,Response) |>
+    summarize(agg_ss=agg_ss,
+    agg_persons=sum(persons),
+    agg_percent=agg_persons*100/agg_ss,
+    agg_percent_sdev=
+    sqrt(agg_percent*(100-agg_percent)/agg_ss),
+    agg_low_ci_limit=
+    agg_percent - 2*agg_percent_sdev,
+    agg_high_ci_limit=
+    agg_percent + 2*agg_percent_sdev) |>
+    distinct() |>
+    select(-c(agg_persons,agg_percent_sdev,agg_ss)) 
+plotDf |>
+        select(-agg_percent) |>
+        print(n=100)
+plotDf |>
+    ggplot( aes(x=Break_Out,
+    y=agg_percent,
+    fill=Response,color=Response,position="fill")) +
+            geom_col() + xlab(my_q) + 
+            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+```{r prototype_workflow_gender}
+## summary by gender
+#(my_q)
+#plotDf <- qDf |>
+#    filter(BreakOutCategoryID=="CAT2") |>
+#    select(Break_Out,Response,Sample_Size,Data_value) |>
+#    na.omit() |>
+#    rename(persons=Sample_Size) |>
+#    mutate(Sample_Size=persons*100/Data_value) |>
+#    group_by(Break_Out,Response) |>
+#    summarize(agg_ss=sum(Sample_Size),
+#    agg_persons=sum(persons),
+#    agg_percent=agg_persons*100/agg_ss,
+#    agg_percent_sdev=sqrt(agg_percent*(100-agg_percent)/agg_ss),
+#    agg_low_ci_limit=agg_percent - 2*agg_percent_sdev,
+#    agg_high_ci_limit=agg_percent + 2*agg_percent_sdev) |>
+#        select(-c(agg_ss,agg_persons,agg_percent_sdev)) 
+#    plotDf |>
+#        select(-agg_percent) |>
+#        print(n=20)
+#
+#    plotDf |>
+#        ggplot( aes(x=Break_Out,
+#        y=agg_percent,
+#        fill=Response,color=Response,position="fill")) +
+#             geom_col() + xlab(my_q)
+```
+
+```{r new_prototype_by_age}
+# comment out if next chunk is used
+# summary by age
+(my_q)
+plotDf <- qDf |>
+    filter(BreakOutCategoryID=="CAT3") |>
+    select(Break_Out,Response,Sample_Size) |>
+    na.omit() |>
+    rename(persons=Sample_Size) |>
+    group_by(Break_Out) |>
+    summarize(Response=Response,
+    persons=persons,
+    agg_ss=sum(persons)) 
+plotDf <- plotDf |>
+    group_by(Break_Out,Response) |>
+    summarize(agg_ss=agg_ss,
+    agg_persons=sum(persons),
+    agg_percent=agg_persons*100/agg_ss,
+    agg_percent_sdev=
+    sqrt(agg_percent*(100-agg_percent)/agg_ss),
+    agg_low_ci_limit=
+    agg_percent - 2*agg_percent_sdev,
+    agg_high_ci_limit=
+    agg_percent + 2*agg_percent_sdev) |>
+    distinct() |>
+    select(-c(agg_persons,agg_percent_sdev,agg_ss)) 
+plotDf |>
+        select(-agg_percent) |>
+        print(n=100)
+plotDf |>
+    ggplot( aes(x=Break_Out,
+    y=agg_percent,
+    fill=Response,color=Response,position="fill")) +
+            geom_col() + xlab(my_q) + 
+            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+```{r prototype_workflow_age}
+## summary by age group
+#(my_q)
+#plotDf <- qDf |>
+#    filter(BreakOutCategoryID=="CAT3") |>
+#    select(Break_Out,Response,Sample_Size,Data_value) |>
+#    na.omit() |>
+#    rename(persons=Sample_Size) |>
+#    mutate(Sample_Size=persons*100/Data_value) |>
+#    group_by(Break_Out,Response) |>
+#    summarize(agg_ss=sum(Sample_Size),
+#    agg_persons=sum(persons),
+#    agg_percent=agg_persons*100/agg_ss,
+#    agg_percent_sdev=sqrt(agg_percent*(100-agg_percent)/agg_ss),
+#    agg_low_ci_limit=agg_percent - 2*agg_percent_sdev,
+#    agg_high_ci_limit=agg_percent + 2*agg_percent_sdev) |>
+#        select(-c(agg_ss,agg_persons,agg_percent_sdev)) 
+# plotDf |>
+#    select(-agg_percent) |>
+#    print(n=20)
+# plotDf |>
+#    ggplot( aes(x=Break_Out,
+#    y=agg_percent,
+#    fill=Response,color=Response,position="fill")) +
+#         geom_col() + xlab(my_q) 
+```
+
+```{r new_prototype_by_race}
+# comment out if next chunk is used
+# summary by race
+(my_q)
+plotDf <- qDf |>
+    filter(BreakOutCategoryID=="CAT4") |>
+    select(Break_Out,Response,Sample_Size) |>
+    na.omit() |>
+    rename(persons=Sample_Size) |>
+    group_by(Break_Out) |>
+    summarize(Response=Response,
+    persons=persons,
+    agg_ss=sum(persons)) 
+plotDf <- plotDf |>
+    group_by(Break_Out,Response) |>
+    summarize(agg_ss=agg_ss,
+    agg_persons=sum(persons),
+    agg_percent=agg_persons*100/agg_ss,
+    agg_percent_sdev=
+    sqrt(agg_percent*(100-agg_percent)/agg_ss),
+    agg_low_ci_limit=
+    agg_percent - 2*agg_percent_sdev,
+    agg_high_ci_limit=
+    agg_percent + 2*agg_percent_sdev) |>
+    distinct() |>
+    select(-c(agg_persons,agg_percent_sdev,agg_ss)) 
+plotDf |>
+        select(-agg_percent) |>
+        print(n=100)
+plotDf |>
+    ggplot( aes(x=Break_Out,
+    y=agg_percent,
+    fill=Response,color=Response,position="fill")) +
+            geom_col() + xlab(my_q) + 
+            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+```{r prototype_workflow_race}
+## summary by race
+#(my_q)
+#plotDf <- qDf |>
+#    filter(BreakOutCategoryID=="CAT4") |>
+#    select(Break_Out,Response,Sample_Size,Data_value) |>
+#    na.omit() |>
+#    rename(persons=Sample_Size) |>
+#    mutate(Sample_Size=persons*100/Data_value) |>
+#    group_by(Break_Out,Response) |>
+#    summarize(agg_ss=sum(Sample_Size),
+#    agg_persons=sum(persons),
+#    agg_percent=agg_persons*100/agg_ss,
+#    agg_percent_sdev=sqrt(agg_percent*(100-agg_percent)/agg_ss),
+#    agg_low_ci_limit=agg_percent - 2*agg_percent_sdev,
+#    agg_high_ci_limit=agg_percent + 2*agg_percent_sdev) |>
+#        select(-c(agg_ss,agg_persons,agg_percent_sdev)) 
+#plotDf |>
+#    select(-agg_percent) |>
+#    print(n=20)
+#
+#plotDf |>
+#    ggplot( aes(x=Break_Out,y=agg_percent,
+#    fill=Response,color=Response,position="fill")) +
+#         geom_col() + xlab(my_q)
+```
+
+```{r new_prototype_by_education_level}
+# comment out if next chunk is used
+# summary by education level
+(my_q)
+plotDf <- qDf |>
+    filter(BreakOutCategoryID=="CAT5") |>
+    select(Break_Out,Response,Sample_Size) |>
+    na.omit() |>
+    rename(persons=Sample_Size) |>
+    group_by(Break_Out) |>
+    summarize(Response=Response,
+    persons=persons,
+    agg_ss=sum(persons)) 
+plotDf <- plotDf |>
+    group_by(Break_Out,Response) |>
+    summarize(agg_ss=agg_ss,
+    agg_persons=sum(persons),
+    agg_percent=agg_persons*100/agg_ss,
+    agg_percent_sdev=
+    sqrt(agg_percent*(100-agg_percent)/agg_ss),
+    agg_low_ci_limit=
+    agg_percent - 2*agg_percent_sdev,
+    agg_high_ci_limit=
+    agg_percent + 2*agg_percent_sdev) |>
+    distinct() |>
+    select(-c(agg_persons,agg_percent_sdev,agg_ss)) 
+plotDf |>
+        select(-agg_percent) |>
+        print(n=100)
+plotDf |>
+    ggplot( aes(x=Break_Out,
+    y=agg_percent,
+    fill=Response,color=Response,position="fill")) +
+            geom_col() + xlab(my_q) + 
+            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+```{r prototype_workflow_education_level}
+## summary by education level
+#(my_q)
+#plotDf <- qDf |>
+#    filter(BreakOutCategoryID=="CAT5") |>
+#    select(Break_Out,Response,Sample_Size,Data_value) |>
+#    na.omit() |>
+#    rename(persons=Sample_Size) |>
+#    mutate(Sample_Size=persons*100/Data_value) |>
+#    group_by(Break_Out,Response) |>
+#    summarize(agg_ss=sum(Sample_Size),
+#    agg_persons=sum(persons),
+#    agg_percent=agg_persons*100/agg_ss,
+#    agg_percent_sdev=sqrt(agg_percent*(100-agg_percent)/agg_ss),
+#    agg_low_ci_limit=agg_percent - 2*agg_percent_sdev,
+#    agg_high_ci_limit=agg_percent + 2*agg_percent_sdev) |>
+#        select(-c(agg_ss,agg_persons,agg_percent_sdev)) 
+#plotDf |>
+#    select(-agg_percent) |>
+#    print(n=20)
+#plotDf |>
+#    ggplot( aes(x=Break_Out,
+#    y=agg_percent,
+#    fill=Response,color=Response,position="fill")) +
+#         geom_col() + xlab(my_q)
+```
+
+```{r new_prototype_by_income}
+# comment out if next chunk is used
+# summary by income
+(my_q)
+plotDf <- qDf |>
+    filter(BreakOutCategoryID=="CAT6") |>
+    select(Break_Out,Response,Sample_Size) |>
+    na.omit() |>
+    rename(persons=Sample_Size) |>
+    group_by(Break_Out) |>
+    summarize(Response=Response,
+    persons=persons,
+    agg_ss=sum(persons)) 
+plotDf <- plotDf |>
+    group_by(Break_Out,Response) |>
+    summarize(agg_ss=agg_ss,
+    agg_persons=sum(persons),
+    agg_percent=agg_persons*100/agg_ss,
+    agg_percent_sdev=
+    sqrt(agg_percent*(100-agg_percent)/agg_ss),
+    agg_low_ci_limit=
+    agg_percent - 2*agg_percent_sdev,
+    agg_high_ci_limit=
+    agg_percent + 2*agg_percent_sdev) |>
+    distinct() |>
+    select(-c(agg_persons,agg_percent_sdev,agg_ss)) 
+plotDf |>
+        select(-agg_percent) |>
+        print(n=100)
+plotDf |>
+    ggplot( aes(x=Break_Out,
+    y=agg_percent,
+    fill=Response,color=Response,position="fill")) +
+            geom_col() + xlab(my_q) + 
+            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+```{r prototype_workflow_income}
+## summary by income
+(my_q)
+plotDf <- qDf |>
+    filter(BreakOutCategoryID=="CAT6") |>
+    select(Break_Out,Response,Sample_Size,Data_value) |>
+    na.omit() |>
+    rename(persons=Sample_Size) |>
+    mutate(Sample_Size=persons*100/Data_value) |>
+    group_by(Break_Out,Response) |>
+    summarize(agg_ss=sum(Sample_Size),
+    agg_persons=sum(persons),
+    agg_percent=agg_persons*100/agg_ss,
+    agg_percent_sdev=sqrt(agg_percent*(100-agg_percent)/agg_ss),
+    agg_low_ci_limit=agg_percent - 2*agg_percent_sdev,
+    agg_high_ci_limit=agg_percent + 2*agg_percent_sdev) |>
+        select(-c(agg_ss,agg_persons,agg_percent_sdev)) 
+plotDf |>
+    select(-agg_percent) |>
+    print(n=20)
+
+plotDf |>
+    ggplot( aes(x=Break_Out,
+    y=agg_percent,
+    fill=Response,color=Response,position="fill")) +
+         geom_col() + xlab(my_q)
+```
+
+
+## Project Guidelines
+
+- **IDE/Language**  Any. Free. Publicly available.
+
+- **team size** 1. 2. or 3.  period.
+
+- **deliverables** 
+    - team members listing (due 11/10/2025)
+
+    - link-shared 10-minute recorded presentation (due 12/3/2025).  *Walk-through dashboard demo.  Equal time for each team member.*
